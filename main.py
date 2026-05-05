@@ -194,6 +194,9 @@ def extrair_dados_conta_sem_comprovante(texto_conta):
     valor = None
     data_pagamento = None
 
+    # --- Extração do VALOR ---
+
+    # Padrão 1: "TOTAL A PAGAR (R$)" — formato genérico (ex: Light, Claro)
     m_valor = re.search(r"TOTAL\s+A\s+PAGAR\s*\(R\$\)", texto_limpo, flags=re.IGNORECASE)
     if m_valor:
         trecho = texto_limpo[m_valor.end():m_valor.end() + 80]
@@ -201,12 +204,37 @@ def extrair_dados_conta_sem_comprovante(texto_conta):
         if valores:
             valor = valor_brasileiro_para_float(valores[0])
 
+    # [AJUSTE 2 - FIX ÁGUAS DO RIO] Padrão 2: "TOTAL (R$)" seguido diretamente
+    # pelo valor — layout usado pela Águas do Rio (sem a palavra "A PAGAR").
+    # Motivo: regex anterior não casava, gerando valor=None e excluindo a despesa
+    # da conferência do extrato.
+    if valor is None:
+        m_valor_alt = re.search(
+            r"TOTAL\s*\(R\$\)\s*(\d{1,3}(?:\.\d{3})*,\d{2})",
+            texto_limpo, flags=re.IGNORECASE,
+        )
+        if m_valor_alt:
+            valor = valor_brasileiro_para_float(m_valor_alt.group(1))
+
+    # --- Extração da DATA DE VENCIMENTO ---
+
+    # Padrão 1: "VENCIMENTO TOTAL (R$)" — formato genérico
     m_data = re.search(r"VENCIMENTO\s+TOTAL\s*\(R\$\)", texto_limpo, flags=re.IGNORECASE)
     if m_data:
         trecho = texto_limpo[m_data.end():m_data.end() + 80]
         datas = re.findall(r"\d{2}/\d{2}/\d{4}", trecho)
         if datas:
             data_pagamento = datas[0]
+
+    # [AJUSTE 2 - FIX ÁGUAS DO RIO] Padrão 2: "VENCIMENTO" seguido diretamente
+    # por uma data — layout da Águas do Rio onde a data aparece isolada após o rótulo.
+    if data_pagamento is None:
+        m_data_alt = re.search(
+            r"VENCIMENTO\s+(\d{2}/\d{2}/\d{4})",
+            texto_limpo, flags=re.IGNORECASE,
+        )
+        if m_data_alt:
+            data_pagamento = m_data_alt.group(1)
 
     if valor is not None and data_pagamento is not None:
         status = "ok"
@@ -273,23 +301,57 @@ def obter_regra_conta(nome_base):
     return regra
 
 
-def criar_imagem_aviso(texto, largura=1200, altura=250):
-    img = Image.new("RGB", (largura, altura), (255, 255, 255))
+# [AJUSTE 1 - FIX FONTE] Substituída a busca direta por "arial.ttf" por uma função
+# que tenta múltiplos caminhos de fonte antes de cair no fallback bitmap.
+# Motivo: ImageFont.load_default() retorna fonte de ~10px, ilegível na impressão.
+def obter_fonte(tamanho=40):
+    """Tenta carregar uma fonte TrueType legível de múltiplos caminhos do sistema."""
+    candidatas = [
+        "arial.ttf",
+        "Arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",   # Linux (Debian/Ubuntu)
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",                     # macOS
+        "C:/Windows/Fonts/arial.ttf",                              # Windows
+        "C:/Windows/Fonts/calibri.ttf",
+    ]
+    for caminho in candidatas:
+        try:
+            return ImageFont.truetype(caminho, tamanho)
+        except Exception:
+            continue
+    # Último recurso: fonte bitmap padrão (qualidade baixa, mas não trava a execução)
+    return ImageFont.load_default()
+
+
+# [AJUSTE 1 - FIX FONTE] Refatorada para usar obter_fonte(), aumentar tamanho da fonte
+# para 40px, adicionar borda azul de identificação e aumentar altura padrão para 300px.
+def criar_imagem_aviso(texto, largura=1200, altura=300):
+    # Fundo levemente azulado para distinguir visualmente do corpo da conta
+    img = Image.new("RGB", (largura, altura), (235, 245, 255))
     draw = ImageDraw.Draw(img)
 
-    try:
-        fonte = ImageFont.truetype("arial.ttf", 28)
-    except Exception:
-        fonte = ImageFont.load_default()
+    # Borda azul ao redor de toda a área do aviso
+    espessura_borda = 4
+    draw.rectangle(
+        [espessura_borda, espessura_borda, largura - espessura_borda - 1, altura - espessura_borda - 1],
+        outline=(21, 101, 192),
+        width=espessura_borda,
+    )
 
-    cor_texto = (200, 0, 0)
+    fonte = obter_fonte(tamanho=40)
+    cor_texto = (21, 101, 192)  # azul escuro — legível e profissional
+
+    margem_horizontal = 80
     linhas = []
     linha_atual = ""
 
     for palavra in texto.split():
         teste = linha_atual + (" " if linha_atual else "") + palavra
         bbox = draw.textbbox((0, 0), teste, font=fonte)
-        if bbox[2] - bbox[0] <= largura - 80:
+        if bbox[2] - bbox[0] <= largura - margem_horizontal:
             linha_atual = teste
         else:
             if linha_atual:
@@ -305,14 +367,14 @@ def criar_imagem_aviso(texto, largura=1200, altura=250):
         bbox = draw.textbbox((0, 0), linha, font=fonte)
         h = bbox[3] - bbox[1]
         alturas_linhas.append(h)
-        altura_total_texto += h + 10
+        altura_total_texto += h + 12
 
     y = (altura - altura_total_texto) // 2
     for i, linha in enumerate(linhas):
         bbox = draw.textbbox((0, 0), linha, font=fonte)
         x = (largura - (bbox[2] - bbox[0])) // 2
         draw.text((x, y), linha, fill=cor_texto, font=fonte)
-        y += alturas_linhas[i] + 10
+        y += alturas_linhas[i] + 12
 
     return img
 
@@ -393,10 +455,12 @@ def processar_contas(base_dir: Path = Path(".")) -> dict:
                 img_conta = redimensionar_imagem(img_conta, regra_conta["redimensionar"])
 
             if sem_comprovante:
+                # [AJUSTE 1 - FIX FONTE] Altura aumentada de 180 para 300px para
+                # acomodar a fonte maior (40px) sem comprimir o texto.
                 img_comprovante = criar_imagem_aviso(
                     "Pagamento por meio de débito automático. Validação por meio do extrato bancário",
                     largura=img_conta.width,
-                    altura=180,
+                    altura=300,
                 )
             else:
                 img_comprovante = pdf_para_imagem(
@@ -622,7 +686,19 @@ def ler_df_despesas_referencia(arquivo_despesas: Path) -> pd.DataFrame:
 
     total = len(df)
     validas = len(df_validas)
-    print(f"   Total de despesas: {total} | Válidas: {validas} | Pendentes: {total - validas}")
+    pendentes = total - validas
+    print(f"   Total de despesas: {total} | Válidas: {validas} | Pendentes: {pendentes}")
+
+    # [AJUSTE 2 - FIX ÁGUAS DO RIO] Exibe aviso explícito para cada despesa excluída,
+    # evitando que a ausência de match passe despercebida silenciosamente.
+    if pendentes > 0:
+        df_pendentes = df[~(df["conta"].ne("") & df["valor"].notna() & df["data_pagamento"].notna())]
+        for _, row in df_pendentes.iterrows():
+            print(
+                f"   ⚠ AVISO: despesa '{row.get('conta', '?')}' excluída da conferência "
+                f"— valor ou data não extraídos (status_extracao={row.get('status_extracao', '?')}). "
+                f"Verifique manualmente o arquivo debug_extracao/."
+            )
 
     if validas == 0:
         raise RuntimeError("Nenhuma despesa válida foi encontrada na planilha de referência.")
