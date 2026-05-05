@@ -204,17 +204,18 @@ def extrair_dados_conta_sem_comprovante(texto_conta):
         if valores:
             valor = valor_brasileiro_para_float(valores[0])
 
-    # [AJUSTE 2 - FIX ÁGUAS DO RIO] Padrão 2: "TOTAL (R$)" seguido diretamente
-    # pelo valor — layout usado pela Águas do Rio (sem a palavra "A PAGAR").
-    # Motivo: regex anterior não casava, gerando valor=None e excluindo a despesa
-    # da conferência do extrato.
+    # [AJUSTE 2 - FIX ÁGUAS DO RIO] Padrão 2: âncora "VIA DO CLIENTE" do cupom físico.
+    # Diagnóstico via debug: PyMuPDF extrai os rótulos do formulário separados dos valores,
+    # então "TOTAL A PAGAR (R$)" e o valor real ficam ~2000 chars apart no texto limpo.
+    # O cupom sempre produz a sequência: "<valor> VIA DO CLIENTE <data>", que é o
+    # ponto de ancoragem mais confiável para capturar valor e vencimento desta conta.
     if valor is None:
-        m_valor_alt = re.search(
-            r"TOTAL\s*\(R\$\)\s*(\d{1,3}(?:\.\d{3})*,\d{2})",
+        m_cupom_valor = re.search(
+            r"(\d{1,3}(?:\.\d{3})*,\d{2})\s+VIA\s+DO\s+CLIENTE",
             texto_limpo, flags=re.IGNORECASE,
         )
-        if m_valor_alt:
-            valor = valor_brasileiro_para_float(m_valor_alt.group(1))
+        if m_cupom_valor:
+            valor = valor_brasileiro_para_float(m_cupom_valor.group(1))
 
     # --- Extração da DATA DE VENCIMENTO ---
 
@@ -226,15 +227,16 @@ def extrair_dados_conta_sem_comprovante(texto_conta):
         if datas:
             data_pagamento = datas[0]
 
-    # [AJUSTE 2 - FIX ÁGUAS DO RIO] Padrão 2: "VENCIMENTO" seguido diretamente
-    # por uma data — layout da Águas do Rio onde a data aparece isolada após o rótulo.
+    # [AJUSTE 2 - FIX ÁGUAS DO RIO] Padrão 2: data imediatamente após "VIA DO CLIENTE".
+    # Diagnóstico via debug: a data de vencimento aparece na linha seguinte ao "VIA DO CLIENTE"
+    # no cupom — sequência exata no texto limpo: "<valor> VIA DO CLIENTE <dd/mm/yyyy>".
     if data_pagamento is None:
-        m_data_alt = re.search(
-            r"VENCIMENTO\s+(\d{2}/\d{2}/\d{4})",
+        m_cupom_data = re.search(
+            r"VIA\s+DO\s+CLIENTE\s+(\d{2}/\d{2}/\d{4})",
             texto_limpo, flags=re.IGNORECASE,
         )
-        if m_data_alt:
-            data_pagamento = m_data_alt.group(1)
+        if m_cupom_data:
+            data_pagamento = m_cupom_data.group(1)
 
     if valor is not None and data_pagamento is not None:
         status = "ok"
