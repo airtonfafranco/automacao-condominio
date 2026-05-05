@@ -304,10 +304,14 @@ def obter_regra_conta(nome_base):
 
 
 # [AJUSTE 1 - FIX FONTE] Substituída a busca direta por "arial.ttf" por uma função
-# que tenta múltiplos caminhos de fonte antes de cair no fallback bitmap.
-# Motivo: ImageFont.load_default() retorna fonte de ~10px, ilegível na impressão.
+# que tenta múltiplos caminhos antes de usar a fonte vetorial embutida no Pillow.
+# Motivo do problema original: ImageFont.load_default() sem size= retorna fonte bitmap
+# de ~10px, ASCII-only — ilegível e sem suporte a acentos (ã, â, é, ú...).
+# Solução definitiva: Pillow >= 10.1.0 inclui fonte FreeType própria via
+# load_default(size=N), escalável e com suporte completo a UTF-8. Funciona em qualquer
+# ambiente sem depender de fontes instaladas no sistema (Windows, Linux, Streamlit Cloud).
 def obter_fonte(tamanho=40):
-    """Tenta carregar uma fonte TrueType legível de múltiplos caminhos do sistema."""
+    """Carrega fonte TrueType do sistema ou usa a fonte vetorial embutida no Pillow."""
     candidatas = [
         "arial.ttf",
         "Arial.ttf",
@@ -324,8 +328,15 @@ def obter_fonte(tamanho=40):
             return ImageFont.truetype(caminho, tamanho)
         except Exception:
             continue
-    # Último recurso: fonte bitmap padrão (qualidade baixa, mas não trava a execução)
-    return ImageFont.load_default()
+
+    # [AJUSTE 1b - FIX STREAMLIT CLOUD] Fallback: fonte FreeType vetorial embutida no Pillow.
+    # load_default(size=N) foi adicionado no Pillow 10.1.0 — suporta tamanho arbitrário
+    # e caracteres UTF-8 completos (acentos portugueses incluídos).
+    # O try/except cobre versões do Pillow entre 10.0.0 e 10.0.x que não têm o parâmetro.
+    try:
+        return ImageFont.load_default(size=tamanho)
+    except TypeError:
+        return ImageFont.load_default()
 
 
 # [AJUSTE 1 - FIX FONTE] Refatorada para usar obter_fonte(), aumentar tamanho da fonte
