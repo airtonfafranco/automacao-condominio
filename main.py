@@ -1104,6 +1104,97 @@ def exportar_excel(
     print(f"\nArquivo Excel gerado: {arquivo_saida_excel}")
 
 
+# ==============================================================
+# ETAPA 3 — CÁLCULO DE VALORES FINANCEIROS DOS EXTRATOS
+# ==============================================================
+
+def calcular_resumo_extratos(
+    df_corrente: pd.DataFrame,
+    df_poupanca: pd.DataFrame,
+) -> dict:
+    """
+    Etapa 3 (fase inicial): calcula os 3 primeiros valores financeiros
+    diretamente dos extratos bancários, sem input manual.
+
+    Valores calculados:
+        desp_bancarias_cc   — Despesas Bancárias (C/C)
+                              Débitos com histórico: COB*, TAR PIX, DB T CESTA
+        desp_bancarias_poup — Despesas Bancárias e similares (Poupança)
+                              Débitos com histórico: DEB IRRF, IRRF MP567
+        juros_poupanca      — Juros de Aplicação Financeira (Poupança)
+                              Créditos com histórico: REM BASICA, CRED JUROS
+
+    Retorna dict com os 3 valores arredondados em 2 casas decimais.
+    """
+
+    # Determinar mês/ano de referência a partir dos metadados do extrato
+    def _mes_ano(df):
+        if "mes" in df.columns and not df["mes"].dropna().empty:
+            return extrair_mes_ano_do_texto_mes(str(df["mes"].dropna().iloc[0]))
+        return None, None
+
+    mes_cc,   ano_cc   = _mes_ano(df_corrente)
+    mes_poup, ano_poup = _mes_ano(df_poupanca)
+
+    # Filtrar somente movimentos do mês de referência
+    def _movs_mes(df, mes, ano):
+        mask = df["classe_linha"] == "movimento"
+        if mes and ano and "data_mov" in df.columns:
+            mask = mask & (df["data_mov"].dt.month == mes) & (df["data_mov"].dt.year == ano)
+        return df[mask]
+
+    movs_cc   = _movs_mes(df_corrente, mes_cc,   ano_cc)
+    movs_poup = _movs_mes(df_poupanca, mes_poup, ano_poup)
+
+    # ── 1. Despesas Bancárias C/C ──────────────────────────────────────────────
+    # Cobranças bancárias: todos os débitos cujo histórico começa com "COB",
+    # "TAR PIX" (tarifa PIX) ou contém "DB T CESTA" (pacote de serviços mensal).
+    desp_banc_cc = 0.0
+    for _, row in movs_cc.iterrows():
+        if row.get("natureza_valor") != "D":
+            continue
+        hist = str(row.get("historico", "")).upper().strip()
+        if hist.startswith("COB") or "TAR PIX" in hist or "DB T CESTA" in hist:
+            val = row.get("valor_num")
+            if val is not None and pd.notna(val):
+                desp_banc_cc += float(val)
+
+    # ── 2. Despesas Bancárias Poupança (IRRF retido na fonte) ─────────────────
+    desp_banc_poup = 0.0
+    for _, row in movs_poup.iterrows():
+        if row.get("natureza_valor") != "D":
+            continue
+        hist = str(row.get("historico", "")).upper().strip()
+        if "IRRF" in hist:
+            val = row.get("valor_num")
+            if val is not None and pd.notna(val):
+                desp_banc_poup += float(val)
+
+    # ── 3. Juros de Aplicação Financeira (Poupança) ───────────────────────────
+    juros_poupanca = 0.0
+    for _, row in movs_poup.iterrows():
+        if row.get("natureza_valor") != "C":
+            continue
+        hist = str(row.get("historico", "")).upper().strip()
+        if "REM BASICA" in hist or "CRED JUROS" in hist:
+            val = row.get("valor_num")
+            if val is not None and pd.notna(val):
+                juros_poupanca += float(val)
+
+    resultado = {
+        "desp_bancarias_cc":   round(desp_banc_cc,   2),
+        "desp_bancarias_poup": round(desp_banc_poup, 2),
+        "juros_poupanca":      round(juros_poupanca,  2),
+    }
+
+    print(f"\n── Etapa 3 — Resumo financeiro ──")
+    print(f"   Despesas Bancárias (C/C):           R$ {resultado['desp_bancarias_cc']:>10,.2f}")
+    print(f"   Despesas Bancárias (Poupança/IRRF):  R$ {resultado['desp_bancarias_poup']:>10,.2f}")
+    print(f"   Juros de Aplicação (Poupança):       R$ {resultado['juros_poupanca']:>10,.2f}")
+
+    return resultado
+
+
 def processar_extratos(base_dir: Path = Path(".")) -> dict:
     """
     Etapa 2: lê extratos bancários HTML e confere cada despesa da planilha de referência.
@@ -1153,6 +1244,8 @@ def processar_extratos(base_dir: Path = Path(".")) -> dict:
     df_corrente_marcado = aplicar_marcacoes_no_extrato(df_corrente, df_conferencia)
     df_poupanca_marcado = aplicar_marcacoes_no_extrato(df_poupanca, df_conferencia)
 
+    resumo_financeiro = calcular_resumo_extratos(df_corrente, df_poupanca)
+
     exportar_excel(df_corrente_marcado, df_poupanca_marcado, df_conferencia, arquivo_saida_excel)
 
     exportar_htmls_destacados(
@@ -1178,6 +1271,7 @@ def processar_extratos(base_dir: Path = Path(".")) -> dict:
         "arquivo_excel": arquivo_saida_excel,
         "arquivo_html_corrente": arquivo_html_corrente,
         "arquivo_html_poupanca": arquivo_html_poupanca,
+        "resumo_financeiro": resumo_financeiro,
     }
 
 
@@ -1185,6 +1279,8 @@ def processar_extratos(base_dir: Path = Path(".")) -> dict:
 # EXECUÇÃO PRINCIPAL
 # ==============================================================
 if __name__ == "__main__":
+    import sys
+
     base = Path(".")
 
     print("=" * 60)
@@ -1196,3 +1292,49 @@ if __name__ == "__main__":
     print("ETAPA 2 — CONFERÊNCIA DOS EXTRATOS BANCÁRIOS")
     print("=" * 60)
     processar_extratos(base)
+
+    # ----------------------------------------------------------
+    # ETAPA 3 — GERAÇÃO DO BALANCETE
+    # ----------------------------------------------------------
+    # Para rodar a Etapa 3, informe mês, ano e caixa via linha de comando:
+    #   python main.py <mes_nome> <mes_num> <ano> <caixa_fin> [caixa_ant]
+    #
+    # Exemplo:
+    #   python main.py março 3 2026 -50.15 -50.15
+    #
+    # Ou chame gerar_balancete() diretamente no código abaixo.
+    # ----------------------------------------------------------
+    if len(sys.argv) >= 5:
+        sys.path.insert(0, str(base / "Melhoria balancete"))
+        try:
+            from gerar_balancete import gerar_balancete
+
+            _mes_nome = sys.argv[1]
+            _mes_num  = int(sys.argv[2])
+            _ano      = int(sys.argv[3])
+            _caixa_fin = float(sys.argv[4])
+            _caixa_ant = float(sys.argv[5]) if len(sys.argv) >= 6 else None
+
+            print("\n" + "=" * 60)
+            print("ETAPA 3 — GERAÇÃO DO BALANCETE")
+            print("=" * 60)
+            gerar_balancete(
+                base_dir  = base,
+                mes_nome  = _mes_nome,
+                mes_num   = _mes_num,
+                ano       = _ano,
+                caixa_fin = _caixa_fin,
+                caixa_ant = _caixa_ant,
+            )
+        except ImportError as e:
+            print(f"\n⚠️  gerar_balancete.py não encontrado: {e}")
+        except Exception as e:
+            print(f"\n❌ Erro na Etapa 3: {e}")
+            raise
+    else:
+        print("\n" + "─" * 60)
+        print("ETAPA 3 — BALANCETE não executada.")
+        print("  Para gerar o balancete, passe os argumentos:")
+        print("  python main.py <mes> <num_mes> <ano> <caixa_fin> [caixa_ant]")
+        print("  Ex: python main.py março 3 2026 -50.15 -50.15")
+        print("─" * 60)

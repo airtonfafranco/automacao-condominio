@@ -204,6 +204,25 @@ if st.session_state.processado:
     col4.metric("Match ambíguo", res_e["match_ambiguo"])
     col5.metric("Sem match", res_e["sem_match"])
 
+    # Valores financeiros (Etapa 3)
+    resumo = res_e.get("resumo_financeiro")
+    if resumo:
+        st.divider()
+        st.subheader("Etapa 3 — Valores Financeiros dos Extratos")
+        col_f1, col_f2, col_f3 = st.columns(3)
+        col_f1.metric(
+            "Despesas Bancárias (C/C)",
+            f"R$ {resumo['desp_bancarias_cc']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+        )
+        col_f2.metric(
+            "Despesas Bancárias (Poupança)",
+            f"R$ {resumo['desp_bancarias_poup']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+        )
+        col_f3.metric(
+            "Juros de Aplicação Financeira",
+            f"R$ {resumo['juros_poupanca']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+        )
+
     st.divider()
 
     # Downloads individuais
