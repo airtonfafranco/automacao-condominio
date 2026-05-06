@@ -1305,27 +1305,33 @@ if __name__ == "__main__":
     # Ou chame gerar_balancete() diretamente no código abaixo.
     # ----------------------------------------------------------
     if len(sys.argv) >= 5:
-        sys.path.insert(0, str(base / "Melhoria balancete"))
         try:
             from gerar_balancete import gerar_balancete
 
-            _mes_nome = sys.argv[1]
-            _mes_num  = int(sys.argv[2])
-            _ano      = int(sys.argv[3])
-            _caixa_fin = float(sys.argv[4])
-            _caixa_ant = float(sys.argv[5]) if len(sys.argv) >= 6 else None
+            _mes_nome      = sys.argv[1]
+            _mes_num       = int(sys.argv[2])
+            _ano           = int(sys.argv[3])
+            _caixa_fin     = float(sys.argv[4])
+            _caixa_ant     = float(sys.argv[5]) if len(sys.argv) >= 6 else None
+            _arq_tacon_tuv = Path(sys.argv[6]) if len(sys.argv) >= 7 else None
 
             print("\n" + "=" * 60)
             print("ETAPA 3 — GERAÇÃO DO BALANCETE")
             print("=" * 60)
-            gerar_balancete(
-                base_dir  = base,
-                mes_nome  = _mes_nome,
-                mes_num   = _mes_num,
-                ano       = _ano,
-                caixa_fin = _caixa_fin,
-                caixa_ant = _caixa_ant,
+            resultado = gerar_balancete(
+                base_dir      = base,
+                mes_nome      = _mes_nome,
+                mes_num       = _mes_num,
+                ano           = _ano,
+                caixa_fin     = _caixa_fin,
+                caixa_ant     = _caixa_ant,
+                arq_tacon_tuv = _arq_tacon_tuv,
             )
+            if resultado.get("ambiguidade"):
+                print("\n⚠️  Ambiguidade detectada na inadimplência — resolução necessária via app.")
+                print(f"   Candidatos: {resultado.get('candidatos')}")
+            elif resultado.get("arquivo_gerado"):
+                print(f"\n✅ Balancete gerado: {resultado['arquivo_gerado']}")
         except ImportError as e:
             print(f"\n⚠️  gerar_balancete.py não encontrado: {e}")
         except Exception as e:
@@ -1335,6 +1341,6 @@ if __name__ == "__main__":
         print("\n" + "─" * 60)
         print("ETAPA 3 — BALANCETE não executada.")
         print("  Para gerar o balancete, passe os argumentos:")
-        print("  python main.py <mes> <num_mes> <ano> <caixa_fin> [caixa_ant]")
-        print("  Ex: python main.py março 3 2026 -50.15 -50.15")
+        print("  python main.py <mes> <num_mes> <ano> <caixa_fin> [caixa_ant] [arq_tacon_tuv]")
+        print("  Ex: python main.py março 3 2026 -50.15 -50.15 TACON_TUV.xlsx")
         print("─" * 60)
